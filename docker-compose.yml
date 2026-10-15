@@ -1,0 +1,103 @@
+name: wagering
+
+x-app: &app
+  build: .
+  depends_on:
+    postgres: { condition: service_healthy }
+    sqs: { condition: service_healthy }
+    keycloak: { condition: service_healthy }
+    migrate: { condition: service_completed_successfully }
+  environment: &app-env
+    DATABASE_URL: postgres://wagering:wagering@postgres:5432/wagering
+    SQS_ENDPOINT: http://sqs:4566
+    AWS_REGION: us-east-1
+    AWS_ACCESS_KEY_ID: test
+    AWS_SECRET_ACCESS_KEY: test
+    LOG_LEVEL: info
+    AUTH_ENABLED: "true"
+    # Tokens are issued for the public URL (iss = localhost:8080); keys and token calls go through the docker network.
+    AUTH_ISSUER: http://localhost:8080/realms/wagering
+    AUTH_JWKS_URI: http://keycloak:8080/realms/wagering/protocol/openid-connect/certs
+    AUTH_TOKEN_URL: http://keycloak:8080/realms/wagering/protocol/openid-connect/token
+  restart: unless-stopped
+  stop_grace_period: 30s
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: wagering
+      POSTGRES_PASSWORD: wagering
+      POSTGRES_DB: wagering
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+    command: ["postgres", "-c", "max_connections=300"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wagering -d wagering"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # SQS emulator. MiniStack is a free, LocalStack-compatible emulator (same port / API).
+  # To use LocalStack instead: image localstack/localstack:4.0 with SERVICES=sqs.
+  sqs:
+    image: ministackorg/ministack:1.5.27
+    ports: ["4566:4566"]
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://localhost:4566/_ministack/health')\" || wget -qO- http://localhost:4566/_ministack/health || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Identity Provider (OIDC). Each game provider is a confidential client using client_credentials;
+  # the realm (clients, secrets, provider_id claim, audience, roles) is imported from docker/keycloak.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+    ports: ["8080:8080"]
+    volumes:
+      - ./docker/keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+  migrate:
+    build: .
+    profiles: ["app"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://wagering:wagering@postgres:5432/wagering
+    command: ["bun", "run", "scripts/migrate.ts", "up"]
+    restart: "no"
+
+  # Three instances of the same service (HTTP + SQS consumer + outbox + pending-reference worker).
+  app-1:
+    <<: *app
+    profiles: ["app"]
+    environment: { <<: *app-env, INSTANCE_ID: app-1 }
+    ports: ["3001:3000"]
+  app-2:
+    <<: *app
+    profiles: ["app"]
+    environment: { <<: *app-env, INSTANCE_ID: app-2 }
+    ports: ["3002:3000"]
+  app-3:
+    <<: *app
+    profiles: ["app"]
+    environment: { <<: *app-env, INSTANCE_ID: app-3 }
+    ports: ["3003:3000"]
+
+volumes:
+  pgdata:
