@@ -1,0 +1,40 @@
+{
+  "name": "wagering-processor",
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3",
+    "@mikro-orm/core": "^6",
+    "@mikro-orm/migrations": "^6",
+    "@mikro-orm/postgresql": "^6",
+    "@nestjs/common": "^11",
+    "@nestjs/core": "^11",
+    "@nestjs/platform-express": "^11",
+    "jose": "^5",
+    "prom-client": "^15.1.3",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/express": "^5.0.6",
+    "typescript": "~5.9"
+  },
+  "private": true,
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "dev": "bun --watch run src/main.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "migrate": "bun run scripts/migrate.ts up",
+    "migrate:down": "bun run scripts/migrate.ts down",
+    "migrate:status": "bun run scripts/migrate.ts status",
+    "sqs:setup": "bun run scripts/setup-queues.ts",
+    "infra:up": "docker compose up -d --wait postgres sqs keycloak",
+    "infra:down": "docker compose down -v",
+    "test": "bun test",
+    "test:unit": "bun test test/unit",
+    "test:integration": "bun test test/integration",
+    "test:concurrency": "bun test test/concurrency",
+    "test:load": "bun run scripts/load-test.ts"
+  },
+  "type": "module"
+}

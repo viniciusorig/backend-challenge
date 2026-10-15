@@ -1,0 +1,4 @@
+[test]
+preload = ["./test/setup.ts"]
+# Integration / multi-process tests start real processes and wait on SQS redelivery.
+timeout = 150000
